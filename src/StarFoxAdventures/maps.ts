@@ -1,6 +1,5 @@
 import * as Viewer from '../viewer.js';
 import * as UI from '../ui.js';
-
 import { DataFetcher } from '../DataFetcher.js';
 import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager.js";
 import { fillSceneParamsDataOnTemplate } from '../gx/gx_render.js';
@@ -11,9 +10,8 @@ import { nArray } from '../util.js';
 import { White } from '../Color.js';
 import { ModelVersion } from "./modelloader.js";
 import { SFARenderer, SceneRenderContext, SFARenderLists } from './render.js';
-import { BlockFetcher, SFABlockFetcher, SwapcircleBlockFetcher, AncientBlockFetcher, EARLYDFPT, EARLYFEAR, EARLYDUPBLOCKFETCHER, EARLY1BLOCKFETCHER, EARLY2BLOCKFETCHER, EARLY3BLOCKFETCHER, EARLY4BLOCKFETCHER  } from './blocks.js';
-import { SFA_GAME_INFO, SFADEMO_GAME_INFO, GameInfo } from './scenes.js';
-import { MaterialFactory } from './materials.js';
+import { BlockFetcher, SFABlockFetcher, SwapcircleBlockFetcher, AncientBlockFetcher, EARLYDFPT, EARLYFEAR, EARLYDUPBLOCKFETCHER, EARLY1BLOCKFETCHER, EARLY2BLOCKFETCHER, EARLY3BLOCKFETCHER, EARLY4BLOCKFETCHER,DPBlockFetcher  } from './blocks.js';
+import { SFA_GAME_INFO, SFADEMO_GAME_INFO, DP_GAME_INFO, GameInfo } from './scenes.js';import { MaterialFactory } from './materials.js';
 import { SFAAnimationController } from './animation.js';
 import { SFATextureFetcher } from './textures.js';
 import { ModelRenderContext, ModelInstance } from './models.js';
@@ -22,6 +20,48 @@ import { AABB } from '../Geometry.js';
 import { LightType } from './WorldLights.js';
 import { computeViewMatrix } from '../Camera.js';
 import { drawWorldSpacePoint, getDebugOverlayCanvas2D } from '../DebugJunk.js';
+// --- Music table ---
+const MAP_MUSIC: Record<string, string> = {
+    2: 'dragrock.mp3',
+    4: 'volcano.mp3',
+    7: 'swaphol.mp3',
+    8: 'swapholbot.mp3',
+    10: 'snowhorn.mp3',
+    11: 'kp.mp3',
+    12: 'crf.mp3',
+    14: 'lightfoot.mp3',
+    16: 'dungeon.mp3',
+    18: 'mmpass.mp3',
+    19: 'darkicemines.mp3',
+    21: 'ofp.mp3',
+    27: 'darkicemines2.mp3',
+    29: 'capeclaw.mp3',
+    28: 'bossgaldon.mp3',
+    31: 'kraztest.mp3',
+    32: 'kraztest.mp3',
+    33: 'kraztest.mp3',
+    34: 'kraztest.mp3',
+    39: 'kraztest.mp3',
+    40: 'kraztest.mp3',
+    50: 'ofp.mp3',
+    51: 'shop.mp3',
+    54: 'magcave.mp3',
+
+
+
+'Early_kraz_test': 'oldfear.mp3',
+
+'ancient_5': 'warlock.mp3',
+    [-997]: 'oldfear.mp3',
+    [-998]: 'dfpt.mp3',
+    [-999]: 'swapcircle.mp3',
+};
+if (!(window as any).musicState) {
+    (window as any).musicState = {
+        muted: false,
+        audio: null as HTMLAudioElement | null
+    };
+}
 
 export interface BlockInfo {
     mod: number;
@@ -79,7 +119,6 @@ function getBlockTable(mapInfo: MapInfo): (BlockInfo | null)[][] {
     return blockTable;
 }
 
-// --- Early1 Walled City remap helper -------------------------------
 type BlockCell = BlockInfo | null;
 
 /** Build a MapSceneInfo that rearranges a map's blocks.
@@ -193,40 +232,65 @@ export class MapInstance {
         return block;
     }
 
-    public addRenderInsts(device: GfxDevice, renderInstManager: GfxRenderInstManager, renderLists: SFARenderLists, modelCtx: ModelRenderContext) {
-        modelCtx.cullByAabb = false;
-        for (let b of this.iterateBlocks()) {
-            mat4.fromTranslation(scratchMtx0, [640 * b.x, 0, 640 * b.z]);
-            mat4.mul(scratchMtx0, this.matrix, scratchMtx0);
-            b.block.addRenderInsts(device, renderInstManager, modelCtx, renderLists, scratchMtx0);
-        }
-        modelCtx.cullByAabb = undefined;
-    }
+public addRenderInsts(
+  device: GfxDevice,
+  renderInstManager: GfxRenderInstManager,
+  renderLists: SFARenderLists,
+  modelCtx: ModelRenderContext,
+  lodStride: number = 1,
 
-    public async reloadBlocks(dataFetcher: DataFetcher) {
-        this.clearBlocks();
-        for (let z = 0; z < this.numRows; z++) {
-            const row: (ModelInstance | null)[] = [];
-            this.blocks.push(row);
-            for (let x = 0; x < this.numCols; x++) {
-                const blockInfo = this.blockInfoTable[z][x];
-                if (blockInfo == null) {
-                    row.push(null);
-                    continue;
-                }
+) {
+  const prevCull = modelCtx.cullByAabb;
 
-                try {
-                    const blockModel = await this.blockFetcher.fetchBlock(blockInfo.mod, blockInfo.sub, dataFetcher);
-                    if (blockModel) {
-                        row.push(new ModelInstance(blockModel));
-                    }
-                } catch (e) {
-                    console.warn(`Skipping block at ${x},${z} due to exception:`);
-                    console.error(e);
-                }
-            }
-        }
+  // Only force-disable if the caller hasn't decided.
+  if (prevCull === undefined)
+    modelCtx.cullByAabb = false;
+
+for (let b of this.iterateBlocks()) {
+  // Cheap LOD: far maps render every Nth block.
+  if (lodStride > 1) {
+    if ((b.x % lodStride) !== 0 || (b.z % lodStride) !== 0)
+      continue;
+  }
+
+  mat4.fromTranslation(scratchMtx0, [640 * b.x, 0, 640 * b.z]);
+  mat4.mul(scratchMtx0, this.matrix, scratchMtx0);
+  b.block.addRenderInsts(device, renderInstManager, modelCtx, renderLists, scratchMtx0);
+}
+
+
+  modelCtx.cullByAabb = prevCull;
+}
+
+
+
+   public async reloadBlocks(dataFetcher: DataFetcher) {
+  this.clearBlocks();
+
+  for (let z = 0; z < this.numRows; z++) {
+    // Pre-size the row so x indices are stable even when blocks are missing.
+    const row: (ModelInstance | null)[] = new Array(this.numCols).fill(null);
+    this.blocks.push(row);
+
+    for (let x = 0; x < this.numCols; x++) {
+      const blockInfo = this.blockInfoTable[z][x];
+      if (blockInfo == null) {
+        row[x] = null;
+        continue;
+      }
+
+      try {
+        const blockModel = await this.blockFetcher.fetchBlock(blockInfo.mod, blockInfo.sub, dataFetcher);
+        row[x] = blockModel ? new ModelInstance(blockModel) : null;
+      } catch (e) {
+        row[x] = null;
+        console.warn(`Skipping block at ${x},${z} due to exception:`);
+        console.error(e);
+      }
     }
+  }
+}
+
 
     public destroy(device: GfxDevice) {
         for (let row of this.blocks) {
@@ -256,8 +320,93 @@ export async function loadMap(gameInfo: GameInfo, dataFetcher: DataFetcher, mapN
         }
     };
 }
+function resolveMusicKey(mapNum: string | number): string {
+    const key = String(mapNum);
+
+    // Early1 + DUP shared combat theme
+    if (key.startsWith('early1_') || key.startsWith('dup_')) {
+        const num = Number(key.split('_')[1]);
+
+        if ([31,32,33,34,39,40].includes(num))
+            return 'Early_kraz_test';
+
+        // fallback to retail number automatically
+        return String(num);
+    }
+
+    return key;
+}
 
 class MapSceneRenderer extends SFARenderer {
+public mapNum: string | number = -1;
+
+private playMusic(mapNum: number) {
+    const musicState = (window as any).musicState;
+       if (musicState.audio) {
+        musicState.audio.pause();
+        musicState.audio.currentTime = 0;
+        musicState.audio = null;
+    }
+const resolvedKey = resolveMusicKey(mapNum);
+const track = MAP_MUSIC[resolvedKey];
+
+    const FADE_TIME = 1000;
+    const TARGET_VOLUME = 0.2;
+
+    function fadeOut(audio: HTMLAudioElement, duration: number) {
+        const step = 50;
+        const delta = audio.volume / (duration / step);
+
+        const interval = setInterval(() => {
+            audio.volume = Math.max(0, audio.volume - delta);
+            if (audio.volume <= 0) {
+                clearInterval(interval);
+                audio.pause();
+                audio.currentTime = 0;
+            }
+        }, step);
+    }
+
+    function fadeIn(audio: HTMLAudioElement, targetVolume: number, duration: number) {
+        audio.volume = 0;
+        const step = 50;
+        const delta = targetVolume / (duration / step);
+
+        const interval = setInterval(() => {
+            audio.volume = Math.min(targetVolume, audio.volume + delta);
+            if (audio.volume >= targetVolume)
+                clearInterval(interval);
+        }, step);
+    }
+
+    // 🔥 NEW: If map has no music, fade out current track
+    if (!track) {
+        if (musicState.audio)
+            fadeOut(musicState.audio, FADE_TIME);
+        return;
+    }
+
+
+    const newSrc = `data/audio/${track}`;
+
+    if (!musicState.audio || !musicState.audio.src.includes(track)) {
+
+        if (musicState.audio)
+            fadeOut(musicState.audio, FADE_TIME);
+
+        const newAudio = new Audio(newSrc);
+        newAudio.loop = true;
+        musicState.audio = newAudio;
+
+        if (!musicState.muted) {
+            newAudio.play().then(() => {
+                fadeIn(newAudio, TARGET_VOLUME, FADE_TIME);
+            }).catch(() => {});
+        }
+    }
+}
+
+
   public textureHolder?: UI.TextureListHolder;
 
     private blockFetcherFactory?: () => Promise<BlockFetcher>;
@@ -267,7 +416,7 @@ class MapSceneRenderer extends SFARenderer {
 
     private map: MapInstance;
 private dataFetcher!: DataFetcher;
-    constructor(context: SceneContext, animController: SFAAnimationController, materialFactory: MaterialFactory) {
+    constructor(public context: SceneContext, animController: SFAAnimationController, materialFactory: MaterialFactory) {
         super(context, animController, materialFactory);
     }
 public async reloadForTextureToggle(): Promise<void> {
@@ -285,9 +434,13 @@ public async reloadForTextureToggle(): Promise<void> {
         this.dataFetcher = dataFetcher; 
         this.map = new MapInstance(info, blockFetcher);
         await this.map.reloadBlocks(dataFetcher);
+
         const texFetcher = (blockFetcher as any).texFetcher;
 if (texFetcher?.textureHolder)
     this.textureHolder = texFetcher.textureHolder;
+
+if ((this as any).mapNum !== undefined)
+    this.playMusic((this as any).mapNum);
 
         return this;
     }
@@ -325,6 +478,7 @@ public createPanels(): UI.Panel[] {
             showMeshes: true,
             outdoorAmbientColor: White,
             setupLights: () => {},
+            
         };
 
         this.map.addRenderInsts(device, renderInstManager, renderLists, modelCtx);
@@ -398,6 +552,14 @@ export class SFAMapSceneDesc implements Viewer.SceneDesc {
     }
 
     public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+      const musicState = (window as any).musicState;
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
         console.log(`Creating scene for ${this.name} (map #${this.mapNum}) ...`);
 
         const animController = new SFAAnimationController();
@@ -431,6 +593,14 @@ export class SwapcircleSceneDesc implements Viewer.SceneDesc {
   ) {}
 
   public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+    const musicState = (window as any).musicState;
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
     console.log(`Creating scene for ${this.name} (map #${this.mapNum}) ...`);
 
     const animController = new SFAAnimationController();
@@ -459,6 +629,7 @@ getBlockInfoAt(col: number, row: number): BlockInfo | null {
     };
 
     const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);
+    mapRenderer.mapNum = -999; 
     const texFetcher = await SFATextureFetcher.create(this.gameInfo, context.dataFetcher, true);
     await texFetcher.loadSubdirs(['swapcircle'], context.dataFetcher);
     texFetcher.logAllTex1TextureIDs();
@@ -472,12 +643,36 @@ getBlockInfoAt(col: number, row: number): BlockInfo | null {
   }
 }
 
+const ANCIENT_TEXTURE_FOLDERS: Record<string, string[]> = {
+  "0": ["warlock"],
+  "2": ["icemountain"],
+  "3": ["swaphol","crfort"],
+  "5": ["warlock", "shop"],
+  "6": ["shop"],
+  "7": ["crfort", "swaphol"],
+  "8": ["icemountain"],
+  "9": ["capeclaw"],
+  "10": ["icemountain"],
+  "11": ["icemountain"],
+  "4": ["nwastes"],
+  "14": ["cloudrace"],
+  
+};
 
 export class AncientMapSceneDesc implements Viewer.SceneDesc {
     constructor(public id: string, public name: string, private gameInfo: GameInfo, private mapKey: any) {
     }
     
     public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+      const musicState = (window as any).musicState;
+console.log("Ancient mapKey:", this.mapKey);
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
         console.log(`Creating scene for ${this.name} ...`);
 
         const pathBase = this.gameInfo.pathBase;
@@ -521,14 +716,15 @@ export class AncientMapSceneDesc implements Viewer.SceneDesc {
         };
 
 const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);
+mapRenderer.mapNum = `ancient_${this.mapKey}`;
+
 
 const texFetcher = await SFATextureFetcher.create(this.gameInfo, dataFetcher, false);
 texFetcher.setModelVersion(ModelVersion.AncientMap);
 
-await texFetcher.loadSubdirs(
-  ['cloudrace','icemountain','swaphol','crfort','warlock','nwastes', 'shop', 'capeclaw' ],
-  dataFetcher
-);
+const folders = ANCIENT_TEXTURE_FOLDERS[String(this.mapKey)] ?? [];
+await texFetcher.loadSubdirs(folders, dataFetcher);
+
 texFetcher.logAllTex1TextureIDs();
 texFetcher.setPngOverride(4100, 'textures/ribbon.png');
 texFetcher.setPngOverride(618, 'textures/walls.png');
@@ -647,6 +843,14 @@ export class EarlyfearMapSceneDesc implements Viewer.SceneDesc {
     }
 
     public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+      const musicState = (window as any).musicState;
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
         console.log(`Creating scene for ${this.name} (map #${this.mapNum}) ...`);
 
         const animController = new SFAAnimationController();
@@ -654,6 +858,8 @@ export class EarlyfearMapSceneDesc implements Viewer.SceneDesc {
         const mapSceneInfo = await loadMap(this.gameInfo, context.dataFetcher, this.mapNum);
 
         const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);
+        mapRenderer.mapNum = -997;
+
         const texFetcher = await SFATextureFetcher.create(this.gameInfo, context.dataFetcher, false);
   texFetcher.setModelVersion(ModelVersion.fear);
 await texFetcher.loadSubdirs([ 'mmshrine'],  context.dataFetcher);
@@ -677,13 +883,21 @@ export class EarlyDFPMapSceneDesc implements Viewer.SceneDesc {
     }
 
 public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+  const musicState = (window as any).musicState;
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
   console.log(`Creating scene for ${this.name} (map #${this.mapNum}) ...`);
 
   const animController = new SFAAnimationController();
   const materialFactory = new MaterialFactory(device);
   const mapSceneInfo = await loadMap(this.gameInfo, context.dataFetcher, this.mapNum);
   const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);
-
+mapRenderer.mapNum = -998;
   const texFetcher = await SFATextureFetcher.create(this.gameInfo, context.dataFetcher, false);
   texFetcher.setModelVersion(ModelVersion.dfpt);
 await texFetcher.loadSubdirs([''], context.dataFetcher);
@@ -728,6 +942,14 @@ export class EarlydupMapSceneDesc implements Viewer.SceneDesc {
     }
 
 public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+  const musicState = (window as any).musicState;
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
   console.log(`Creating scene for ${this.name} (map #${this.mapNum}) ...`);
 
   const animController = new SFAAnimationController();
@@ -801,6 +1023,8 @@ public async createScene(device: GfxDevice, context: SceneContext): Promise<View
   }
 
     const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);
+mapRenderer.mapNum = `dup_${this.mapNum}`;
+
     const texFetcher  = await SFATextureFetcher.create(this.gameInfo, context.dataFetcher, false);
 
     texFetcher.setModelVersion(ModelVersion.dup);
@@ -848,6 +1072,14 @@ export class Early1MapSceneDesc implements Viewer.SceneDesc {
   constructor(public mapNum: number, public id: string, public name: string, private gameInfo: GameInfo = SFA_GAME_INFO) {}
 
   public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+    const musicState = (window as any).musicState;
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
     console.log(`Creating scene for ${this.name} (map #${this.mapNum}) ...`);
 
     const animController  = new SFAAnimationController();
@@ -912,6 +1144,8 @@ export class Early1MapSceneDesc implements Viewer.SceneDesc {
 
     // --- Renderer + textures (same as before) ---
     const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);
+mapRenderer.mapNum = `early1_${this.mapNum}`;
+
     const texFetcher  = await SFATextureFetcher.create(this.gameInfo, context.dataFetcher, false);
 
     texFetcher.setModelVersion(ModelVersion.Early1);
@@ -971,6 +1205,14 @@ export class Early2MapSceneDesc implements Viewer.SceneDesc {
     }
 
     public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+      const musicState = (window as any).musicState;
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
         console.log(`Creating scene for ${this.name} (map #${this.mapNum}) ...`);
 
         const animController = new SFAAnimationController();
@@ -1001,6 +1243,8 @@ export class Early2MapSceneDesc implements Viewer.SceneDesc {
       mapSceneInfo = await loadMap(this.gameInfo, context.dataFetcher, this.mapNum);
     }
         const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);
+        mapRenderer.mapNum = this.mapNum;
+
         const texFetcher = await SFATextureFetcher.create(this.gameInfo, context.dataFetcher, false);
        texFetcher.setModelVersion(ModelVersion.Early2);
 await texFetcher.loadSubdirs([''], context.dataFetcher);
@@ -1027,6 +1271,14 @@ export class Early3MapSceneDesc implements Viewer.SceneDesc {
   ) {}
 
   public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+    const musicState = (window as any).musicState;
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
     console.log(`Creating scene for ${this.name} (map #${this.mapNum}) ...`);
 
     const animController = new SFAAnimationController();
@@ -1054,13 +1306,13 @@ export class Early3MapSceneDesc implements Viewer.SceneDesc {
         break;
       }
       default: {
-        // Fallback to the map's native layout
         mapSceneInfo = await loadMap(this.gameInfo, context.dataFetcher, this.mapNum);
         break;
       }
     }
 
     const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);
+mapRenderer.mapNum = this.mapNum;
 
     const texFetcher = await SFATextureFetcher.create(this.gameInfo, context.dataFetcher, false);
     texFetcher.setModelVersion(ModelVersion.Early3);
@@ -1079,7 +1331,6 @@ export class Early3MapSceneDesc implements Viewer.SceneDesc {
       this.gameInfo, context.dataFetcher, device, materialFactory, animController, Promise.resolve(texFetcher)
     );
 
-    // Let the renderer rebuild blocks if textures are toggled later
     mapRenderer.setBlockFetcherFactory(() =>
       EARLY3BLOCKFETCHER.create(
         this.gameInfo, context.dataFetcher, device, materialFactory, animController, Promise.resolve(texFetcher)
@@ -1088,14 +1339,12 @@ export class Early3MapSceneDesc implements Viewer.SceneDesc {
 
     await mapRenderer.create(mapSceneInfo, this.gameInfo, context.dataFetcher, blockFetcher);
 
-    // Optional: same toggle UI used in your other scenes
     ensureTextureToggleUI(async (enabled: boolean) => {
       texFetcher.setTexturesEnabled(enabled);
       (materialFactory as any).texturesEnabled = enabled;
       await mapRenderer.reloadForTextureToggle();
     }, texFetcher.getTexturesEnabled?.() ?? true);
 
-    // Default camera turn
     const matrix = mat4.create();
     mat4.rotateY(matrix, matrix, Math.PI * 3 / 4);
     mapRenderer.setMatrix(matrix);
@@ -1109,6 +1358,14 @@ export class Early4MapSceneDesc implements Viewer.SceneDesc {
     }
 
     public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+      const musicState = (window as any).musicState;
+
+if (musicState.audio) {
+    musicState.audio.pause();
+    musicState.audio.currentTime = 0;
+    musicState.audio = null;
+}
+
         console.log(`Creating scene for ${this.name} (map #${this.mapNum}) ...`);
 
         const animController = new SFAAnimationController();
@@ -1116,6 +1373,8 @@ export class Early4MapSceneDesc implements Viewer.SceneDesc {
         const mapSceneInfo = await loadMap(this.gameInfo, context.dataFetcher, this.mapNum);
 
         const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);
+        mapRenderer.mapNum = this.mapNum;
+
                 const texFetcher = await SFATextureFetcher.create(this.gameInfo, context.dataFetcher, false);
     texFetcher.setModelVersion(ModelVersion.Early4);
     await texFetcher.loadSubdirs([''], context.dataFetcher);
@@ -1137,12 +1396,273 @@ texFetcher.setCurrentModelID(this.mapNum);
         const blockFetcher = await EARLY4BLOCKFETCHER.create(this.gameInfo,context.dataFetcher, device, materialFactory, animController, Promise.resolve(texFetcher));
         await mapRenderer.create(mapSceneInfo, this.gameInfo, context.dataFetcher, blockFetcher);
 
-        // Rotate camera 135 degrees to more reliably produce a good view of the map
-        // when it is loaded for the first time.
        const matrix = mat4.create();
         mat4.rotateY(matrix, matrix, Math.PI * 3 / 4);
         mapRenderer.setMatrix(matrix);
 
         return mapRenderer;
+    }
+}
+
+
+export class DPMapSceneDesc implements Viewer.SceneDesc {
+    constructor(public mapNum: number, public id: string, public name: string, private gameInfo?: GameInfo) {
+    }
+
+    public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+    const gInfo = this.gameInfo ?? DP_GAME_INFO;
+
+    const animController = new SFAAnimationController();
+    const materialFactory = new MaterialFactory(device);
+    
+    const mapSceneInfo = await loadMap(gInfo, context.dataFetcher, this.mapNum);
+    const mapRenderer = new MapSceneRenderer(context, animController, materialFactory);        
+    
+    const texFetcher = await SFATextureFetcher.create(gInfo, context.dataFetcher, true);
+    
+
+    await texFetcher.loadSubdirs([''], context.dataFetcher);
+
+    texFetcher.setModelVersion(ModelVersion.DinosaurPlanet);
+    
+    const blockFetcher = await DPBlockFetcher.create(
+        gInfo, context.dataFetcher, materialFactory, Promise.resolve(texFetcher)
+    );
+
+    await mapRenderer.create(mapSceneInfo, gInfo, context.dataFetcher, blockFetcher);
+
+
+
+    return mapRenderer;
+    
+    }
+}
+
+
+type DPGlobalMapEntry = {
+    CoordX: number;
+    CoordZ: number;
+    Unk0: number;
+    MapIndex: number;
+    Unk1: number;
+    Unk2: number;
+};
+
+type DPPlacedMap = {
+    key: number;           
+    mapIndex: number;
+    gx: number;            
+    gz: number;
+    wx: number;            
+    wz: number;           
+};
+
+class DPFullWorldRenderer extends SFARenderer {
+    private placed: DPPlacedMap[] = [];
+    private loaded = new Map<number, MapInstance>();
+    private loading = new Map<number, Promise<void>>();
+    private placedByKey = new Map<number, DPPlacedMap>();
+    private camGX = 0;
+    private camGZ = 0;
+
+constructor(
+    private device: GfxDevice,
+    context: SceneContext,
+    animController: SFAAnimationController,
+    materialFactory: MaterialFactory,
+    private gameInfo: GameInfo,
+    private dataFetcher: DataFetcher,
+    private blockFetcher: BlockFetcher,
+    placed: DPPlacedMap[],
+) {
+    super(context, animController, materialFactory);
+  this.placed = placed;
+for (const p of placed) this.placedByKey.set(p.key, p);
+
+}
+
+
+
+    private static readonly STEP = 640 ; 
+
+private ensureLoaded(p: DPPlacedMap): Promise<void> {
+    if (this.loaded.has(p.key))
+        return Promise.resolve();
+
+    const existing = this.loading.get(p.key);
+    if (existing)
+        return existing;
+
+    const prom = (async () => {
+
+            try {
+const info = await loadMap(this.gameInfo, this.dataFetcher, p.mapIndex);
+const inst = new MapInstance(info, this.blockFetcher);
+
+const [ox, oz] = info.getOrigin();     
+const anchorX = p.wx - ox * 640;
+const anchorZ = p.wz - oz * 640;
+
+const m = mat4.create();
+mat4.fromTranslation(m, [anchorX, 0, anchorZ]);
+inst.setMatrix(m);
+
+
+                await inst.reloadBlocks(this.dataFetcher);
+                this.loaded.set(p.key, inst);
+            } catch (e) {
+                console.warn(`DPFullWorld: failed to load map ${p.mapIndex} @ (${p.gx},${p.gz})`, e);
+            } finally {
+                this.loading.delete(p.key);
+            }
+        })();
+
+        this.loading.set(p.key, prom);
+        return prom;
+    }
+public async loadAllMaps(concurrency: number = 4): Promise<void> {
+    const queue = this.placed.slice();
+    let idx = 0;
+
+    const worker = async () => {
+        while (true) {
+            const i = idx++;
+            if (i >= queue.length) return;
+            await this.ensureLoaded(queue[i]);
+        }
+    };
+
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < concurrency; i++)
+        workers.push(worker());
+
+    await Promise.all(workers);
+}
+
+    private unload(key: number): void {
+        const inst = this.loaded.get(key);
+        if (inst) {
+inst.destroy(this.device);
+            this.loaded.delete(key);
+        }
+    }
+
+protected override update(viewerInput: Viewer.ViewerRenderInput) {
+    super.update(viewerInput);
+
+    const camWorld = viewerInput.camera.worldMatrix;
+    const camX = camWorld[12];
+    const camZ = camWorld[14];
+
+    const step = DPFullWorldRenderer.STEP;
+    this.camGX = Math.round(camX / step);
+    this.camGZ = Math.round(camZ / step);
+}
+
+
+    protected override addWorldRenderInsts(
+        device: GfxDevice,
+        renderInstManager: GfxRenderInstManager,
+        renderLists: SFARenderLists,
+        sceneCtx: SceneRenderContext
+    ) {
+        const template = renderInstManager.pushTemplateRenderInst();
+        fillSceneParamsDataOnTemplate(template, sceneCtx.viewerInput);
+
+        const modelCtx: ModelRenderContext = {
+            sceneCtx,
+            showDevGeometry: false,
+            ambienceIdx: 0,
+            showMeshes: true,
+            outdoorAmbientColor: White,
+            setupLights: () => {},
+            cullByAabb: false,
+        };
+
+for (const [key, inst] of this.loaded) {
+    const p = this.placedByKey.get(key);
+    if (!p) continue;
+
+    const dx = Math.abs(p.gx - this.camGX);
+    const dz = Math.abs(p.gz - this.camGZ);
+    const d = Math.max(dx, dz);
+
+ 
+    const stride =
+        (d <= 2)  ? 1 :   
+        (d <= 8)  ? 1 :  
+        (d <= 20) ? 1 :  
+                  6;    
+
+    inst.addRenderInsts(device, renderInstManager, renderLists, modelCtx, stride);
+}
+
+        renderInstManager.popTemplateRenderInst();
+    }
+
+    public override destroy(device: GfxDevice): void {
+        for (const inst of this.loaded.values())
+            inst.destroy(device);
+        this.loaded.clear();
+        super.destroy(device);
+    }
+}
+
+export class DPFullWorldSceneDesc implements Viewer.SceneDesc {
+    constructor(public id: string, public name: string, private gameInfo: GameInfo = DP_GAME_INFO) {}
+
+    public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+        const gInfo = this.gameInfo;
+        const dataFetcher = context.dataFetcher;
+
+        // Load globalmap.json
+        const buf = await dataFetcher.fetchData(`${gInfo.pathBase}/globalmap.json`);
+        const txt = new TextDecoder('utf-8').decode(buf.arrayBuffer as ArrayBuffer);
+        const entries: DPGlobalMapEntry[] = JSON.parse(txt);
+
+        const step = DPFullWorldRenderer['STEP'] ?? (640 * 16);
+
+const valid = entries.filter((e) => e.MapIndex !== -1);
+
+let minX = Infinity, minZ = Infinity;
+let maxX = -Infinity, maxZ = -Infinity;
+
+for (const e of valid) {
+  minX = Math.min(minX, e.CoordX);
+  maxX = Math.max(maxX, e.CoordX);
+  minZ = Math.min(minZ, e.CoordZ);
+  maxZ = Math.max(maxZ, e.CoordZ);
+}
+
+console.log('DP globalmap bounds:', { minX, maxX, minZ, maxZ, count: valid.length });
+
+const placed: DPPlacedMap[] = valid.map((e) => {
+ 
+  const gx = e.CoordX - minX;
+  const gz = e.CoordZ - minZ;
+
+  return {
+    key: (e.MapIndex << 16) ^ ((gx & 0xff) << 8) ^ (gz & 0xff), 
+    mapIndex: e.MapIndex,
+    gx, gz,
+    wx: gx * step,
+    wz: gz * step,
+  };
+});
+
+
+        const animController = new SFAAnimationController();
+        const materialFactory = new MaterialFactory(device);
+        const texFetcher = await SFATextureFetcher.create(gInfo, dataFetcher, true);
+        await texFetcher.loadSubdirs([''], dataFetcher);
+        texFetcher.setModelVersion(ModelVersion.DinosaurPlanet);
+
+        const blockFetcher = await DPBlockFetcher.create(
+            gInfo, dataFetcher, materialFactory, Promise.resolve(texFetcher)
+        );
+
+const renderer = new DPFullWorldRenderer(device, context, animController, materialFactory, gInfo, dataFetcher, blockFetcher, placed);
+await renderer.loadAllMaps(8); 
+return renderer;
     }
 }

@@ -53,6 +53,7 @@ export enum ModelVersion {
   Early2,
   Early3,
   Early4,
+  DinosaurPlanet,
 }
 
 interface DisplayListInfo {
@@ -670,6 +671,172 @@ export function loadModel(
   version: ModelVersion,
 ): Model {
   dumpRawBytes(data, 256);
+    if (version === ModelVersion.DinosaurPlanet) {
+    return loadDinosaurPlanetModel(data, texFetcher, materialFactory);
+  }
+// ===== Dinosaur Planet (N64-style) loader =====
+// Parses mod22.bin-like chunks: header + Vtx(16B) + tri(8B local 0..31) + batch table (0x18).
+
+function readU32BE(d: DataView, o: number) { return d.getUint32(o, false); }
+function readU16BE(d: DataView, o: number) { return d.getUint16(o, false); }
+function readS16BE(d: DataView, o: number) { return d.getInt16(o, false); }
+
+function rgba8ToRgba4_u16BE(r: number, g: number, b: number, a: number): number {
+  const R = (r >>> 4) & 0xF;
+  const G = (g >>> 4) & 0xF;
+  const B = (b >>> 4) & 0xF;
+  const A = (a >>> 4) & 0xF;
+  return (R << 12) | (G << 8) | (B << 4) | A;
+}
+
+type DPBatch = {
+  flags: number;
+  materialId: number;
+  vStart: number; vEnd: number;
+  tStart: number; tEnd: number;
+};
+
+type DPTri = { flip: boolean; i0: number; i1: number; i2: number };
+
+function buildGXTrianglesDL(batch: DPBatch, tris: DPTri[]) {
+  const triCount = (batch.tEnd - batch.tStart);
+  const vtxCount = triCount * 3;
+
+  // Modified: 6 bytes per vertex (POS + CLR + TEX)
+  const out = new Uint8Array(3 + vtxCount * 6);
+  let p = 0;
+  out[p++] = 0x90;
+  out[p++] = (vtxCount >>> 8) & 0xFF;
+  out[p++] = (vtxCount >>> 0) & 0xFF;
+
+  for (let ti = batch.tStart; ti < batch.tEnd; ti++) {
+    let { flip, i0, i1, i2 } = tris[ti];
+    if (flip) { const tmp = i1; i1 = i2; i2 = tmp; }
+
+    const a = batch.vStart + i0;
+    const b = batch.vStart + i1;
+    const c = batch.vStart + i2;
+
+    for (const idx of [a, b, c]) {
+      out[p++] = (idx >>> 8) & 0xFF; out[p++] = idx & 0xFF; // POS
+      out[p++] = (idx >>> 8) & 0xFF; out[p++] = idx & 0xFF; // CLR0
+      out[p++] = (idx >>> 8) & 0xFF; out[p++] = idx & 0xFF; // TEX0
+    }
+  }
+  return out;
+}
+
+function loadDinosaurPlanetModel(
+  data: DataView,
+  texFetcher: TextureFetcher,
+  materialFactory: MaterialFactory,
+): Model {
+  const model = new Model(ModelVersion.DinosaurPlanet);
+  model.isMapBlock = true;
+
+  const cmdOff = readU32BE(data, 0x00);
+  const vtxOff = readU32BE(data, 0x04);
+  const triOff = readU32BE(data, 0x08);
+  const batOff = readU32BE(data, 0x0C);
+
+  const batchCount = ((cmdOff - batOff) / 0x18) | 0;
+  if (batchCount <= 0) throw new Error(`DP: bad batchCount=${batchCount}`);
+
+  const lastRec = batOff + (batchCount - 1) * 0x18;
+  const totalVerts = readU16BE(data, lastRec + 0x04); 
+  const totalTris = readU16BE(data, lastRec + 0x06);
+
+  const posAB = new ArrayBuffer(totalVerts * 6);
+  const posDV = new DataView(posAB);
+  const clrAB = new ArrayBuffer(totalVerts * 4);
+  const clrDV = new DataView(clrAB);
+  const texAB = new ArrayBuffer(totalVerts * 4);
+  const texDV = new DataView(texAB);
+
+  for (let i = 0; i < totalVerts; i++) {
+    const o = vtxOff + i * 16;
+    posDV.setInt16(i * 6 + 0, readS16BE(data, o + 0x00), false);
+    posDV.setInt16(i * 6 + 2, readS16BE(data, o + 0x02), false);
+    posDV.setInt16(i * 6 + 4, readS16BE(data, o + 0x04), false);
+
+    // UV Parsing
+    texDV.setInt16(i * 4 + 0, readS16BE(data, o + 0x08), false);
+    texDV.setInt16(i * 4 + 2, readS16BE(data, o + 0x0A), false);
+
+    clrDV.setUint8(i * 4 + 0, data.getUint8(o + 0x0C));
+    clrDV.setUint8(i * 4 + 1, data.getUint8(o + 0x0D));
+    clrDV.setUint8(i * 4 + 2, data.getUint8(o + 0x0E));
+    clrDV.setUint8(i * 4 + 3, data.getUint8(o + 0x0F));
+  }
+
+  const tris: DPTri[] = [];
+  for (let i = 0; i < totalTris; i++) {
+    const o = triOff + i * 8;
+    const f = data.getUint8(o + 0);
+    tris.push({ flip: !!(f & 0x80), i0: data.getUint8(o + 1), i1: data.getUint8(o + 2), i2: data.getUint8(o + 3) });
+  }
+
+  const batches: DPBatch[] = [];
+  let prevV = 0, prevT = 0;
+  for (let i = 0; i < batchCount; i++) {
+    const o = batOff + i * 0x18;
+    const flags = readU16BE(data, o + 0x00);
+    const materialId = readU16BE(data, o + 0x02);
+    const vEnd = readU16BE(data, o + 0x04);
+    const tEnd = readU16BE(data, o + 0x06);
+    if (vEnd !== prevV || tEnd !== prevT) {
+      batches.push({ flags, materialId, vStart: prevV, vEnd, tStart: prevT, tEnd });
+    }
+    prevV = vEnd;
+    prevT = tEnd;
+  }
+
+  const vcd: GX_VtxDesc[] = nArray(GX.Attr.MAX + 1, () => ({ type: GX.AttrType.NONE }));
+  vcd[GX.Attr.POS].type = GX.AttrType.INDEX16;
+  vcd[GX.Attr.CLR0].type = GX.AttrType.INDEX16;
+  vcd[GX.Attr.TEX0].type = GX.AttrType.INDEX16;
+
+  const vat: GX_VtxAttrFmt[][] = nArray(8, () => nArray(GX.Attr.MAX + 1, () => ({ compType: GX.CompType.U8, compShift: 0, compCnt: 0 } as GX_VtxAttrFmt)));
+  vat[0][GX.Attr.POS] = { compType: GX.CompType.S16, compShift: 0, compCnt: GX.CompCnt.POS_XYZ };
+  vat[0][GX.Attr.CLR0] = { compType: GX.CompType.RGBA8, compShift: 0, compCnt: GX.CompCnt.CLR_RGBA };
+  
+  // FIXED: Shift 10 significantly enlarges the texture on the polygons
+  vat[0][GX.Attr.TEX0] = { compType: GX.CompType.S16, compShift: 10, compCnt: GX.CompCnt.TEX_ST };
+
+  const vtxArrays: GX_Array[] = [];
+  vtxArrays[GX.Attr.POS] = { buffer: ArrayBufferSlice.fromView(new DataView(posAB)), offs: 0, stride: 6 };
+  vtxArrays[GX.Attr.CLR0] = { buffer: ArrayBufferSlice.fromView(new DataView(clrAB)), offs: 0, stride: 4 };
+  vtxArrays[GX.Attr.TEX0] = { buffer: ArrayBufferSlice.fromView(new DataView(texAB)), offs: 0, stride: 4 };
+
+  model.createModelShapes = () => {
+    const shapes = new ModelShapes(model, new DataView(posAB), undefined);
+    shapes.shapes[0] = []; shapes.shapes[1] = []; shapes.shapes[2] = [];
+
+    for (const b of batches) {
+      const shader: Shader = {
+        layers: [{ texId: b.materialId, tevMode: 0, enableScroll: 0 }],
+        flags: ShaderFlags.Water,
+        attrFlags: ShaderAttrFlags.CLR | (ShaderAttrFlags as any).TEX0, 
+        hasHemisphericProbe: false, hasReflectiveProbe: false, reflectiveProbeMaskTexId: null,
+        reflectiveProbeIdx: 0, reflectiveAmbFactor: 0.0, hasNBTTexture: false, nbtTexId: null,
+        nbtParams: 0, furRegionsTexId: null, color: { r: 1, g: 1, b: 1, a: 1 },
+        normalFlags: 0, lightFlags: 0, texMtxCount: 0,
+      };
+      const material = materialFactory.buildMapMaterial(shader, texFetcher);
+
+      const dlBytes = buildGXTrianglesDL(b, tris);
+      const geom = new ShapeGeometry(vtxArrays, vcd, vat, new DataView(dlBytes.buffer), false);
+      
+      shapes.shapes[0].push(new Shape(geom, new ShapeMaterial(material), false));
+    }
+    return shapes;
+  };
+
+  model.sharedModelShapes = model.createModelShapes();
+  return model;
+}
+// ===== end DP loader =====
+
   const model = new Model(version);
   let fields = FIELDS[version];
 
@@ -990,7 +1157,7 @@ if (fields.isMapBlock && clrBufferForArrays.byteLength === 0) {
   const texcoordOffset = data.getUint32(fields.texcoordOffset);
   const texcoordCount = data.getUint16(fields.texcoordCount);
 //  console.log(`Loading ${texcoordCount} texcoords from 0x${texcoordOffset.toString(16)}`);
-  const texcoordBuffer = dataSubarray(data, texcoordOffset);
+const texcoordBuffer = dataSubarray(data, texcoordOffset);
 
   let hasSkinning = false;
   let jointCount = 0;
@@ -1231,7 +1398,7 @@ if (fields.isMapBlock && clrBufferForArrays.byteLength === 0) {
     if (wantClr0) {
       if (isEarly34Map) {
         // Early3/4 maps force CLR as INDEX16 but still encode one size bit — consume it to keep alignment.
-        bits.get(1);
+       bits.get(1);
         vcd[GX.Attr.CLR0].type = GX.AttrType.INDEX16;
       } else {
         vcd[GX.Attr.CLR0].type = bits.get(1) ? GX.AttrType.INDEX16 : GX.AttrType.INDEX8;
@@ -1708,7 +1875,7 @@ if (usingDummyClr) {
 
             const vtxArrays = getVtxArrays(posBuffer, nrmBuffer);
             const waterMat = materialFactory.buildWaterMaterial(curShader);
-            const tunedVcd = tuneVCDForDL(data, dlInfo.offset, dlInfo.size, vcd, fields, curShader);
+const tunedVcd = tuneVCDForDL(data, dlInfo.offset, dlInfo.size, vcd, fields, curShader);
 
             const geom = new ShapeGeometry(vtxArrays, tunedVcd, vat, displayList, model.hasFineSkinning);
             geom.setPnMatrixMap(pnMatrixMap, hasSkinning, model.hasFineSkinning);
@@ -1734,7 +1901,7 @@ if (usingDummyClr) {
               : materialFactory.buildObjectMaterial(cloned, texFetcher, fields.hasBones && jointCount >= 2);
           }
 
-          const tunedVcd = tuneVCDForDL(data, dlInfo.offset, dlInfo.size, vcd, fields, curShader);
+const tunedVcd = tuneVCDForDL(data, dlInfo.offset, dlInfo.size, vcd, fields, curShader);
 
           // Guard tiny DLs (cnt*s beyond size)
           {

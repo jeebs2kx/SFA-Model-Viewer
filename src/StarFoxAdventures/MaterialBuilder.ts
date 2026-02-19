@@ -107,7 +107,7 @@ export class SFAMaterialBuilder<RenderContext = undefined> {
         this.texCoordUsesMtxIndex = undefined;
         this.gxMaterial = undefined;
         this.gxMaterialHelper = undefined;
-        console.log(`[DEBUG_MATERIAL_BUILDER] SFAMaterialBuilder reset completed.`);
+     //   console.log(`[DEBUG_MATERIAL_BUILDER] SFAMaterialBuilder reset completed.`);
     }
     
     public genTevStage(): TevStage {

@@ -98,7 +98,7 @@ const scratchVec0 = vec3.create();
 // The vertices and polygons of a shape.
 export class ShapeGeometry {
     private vtxLoader: VtxLoader;
-    private loadedVertexData: LoadedVertexData;
+    public loadedVertexData: LoadedVertexData;
 
     private shapeHelper: MyShapeHelper | null = null;
     private drawParams = new DrawParams();

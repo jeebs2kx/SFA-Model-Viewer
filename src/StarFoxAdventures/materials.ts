@@ -1880,9 +1880,10 @@ export class MaterialFactory {
     public cache: GfxRenderCache;
     public scrollSlots: ScrollSlot[] = [];
 
-    constructor(public device: GfxDevice) {
+   constructor(public device: GfxDevice) {
         this.cache = new GfxRenderCache(this.device);
     }
+
 
     public update(animController: SFAAnimationController) {
         for (let i = 0; i < this.scrollSlots.length; i++) {

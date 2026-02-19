@@ -1,5 +1,6 @@
 import { mat4, vec3 } from 'gl-matrix';
 import * as UI from '../ui.js';
+
 import { DataFetcher } from '../DataFetcher.js';
 import * as Viewer from '../viewer.js';
 import { SFABlockFetcher, BlockFetcher, SwapcircleBlockFetcher, AncientBlockFetcher, EARLY1BLOCKFETCHER, EARLY2BLOCKFETCHER, EARLY3BLOCKFETCHER, EARLY4BLOCKFETCHER  } from './blocks.js';
@@ -30,6 +31,41 @@ import { computeViewMatrix } from '../Camera.js';
 import { nArray } from '../util.js';
 import { transformVec3Mat4w0, transformVec3Mat4w1 } from '../MathHelpers.js';
 import { GfxRenderCache } from '../gfx/render/GfxRenderCache.js';
+// Ensure global music state exists
+if (!(window as any).musicState) {
+    (window as any).musicState = {
+        muted: false,
+        audio: null as HTMLAudioElement | null
+    };
+}
+
+const MAP_MUSIC: Record<number, string> = {
+    2: 'dragrock.mp3',
+    4: 'volcano.mp3',
+    7: 'swaphol.mp3',
+    8: 'swapholbot.mp3',
+    10: 'snowhorn.mp3',
+    11: 'kp.mp3',
+    12: 'crf.mp3',
+    14: 'lightfoot.mp3',
+    16: 'dungeon.mp3',
+    18: 'mmpass.mp3',
+    19: 'darkicemines.mp3',
+    21: 'ofp.mp3',
+    27: 'darkicemines2.mp3',
+    29: 'capeclaw.mp3',
+    28: 'bossgaldon.mp3',
+    31: 'kraztest.mp3',
+    32: 'kraztest.mp3',
+    33: 'kraztest.mp3',
+    34: 'kraztest.mp3',
+    39: 'kraztest.mp3',
+    40: 'kraztest.mp3',
+    50: 'ofp.mp3',
+    51: 'shop.mp3',
+    54: 'magcave.mp3',
+};
+
 
 const scratchVec0 = vec3.create();
 const scratchMtx0 = mat4.create();
@@ -37,6 +73,9 @@ const scratchMtx1 = mat4.create();
 const scratchColor0 = colorNewFromRGBA(1, 1, 1, 1);
 
 export class World {
+    public mapNum: number | null = null;
+
+    public backgroundMusic: HTMLAudioElement | null = null;
     public animController: SFAAnimationController;
     public envfxMan: EnvfxManager;
     public blockFetcher: SFABlockFetcher;
@@ -46,6 +85,68 @@ export class World {
     public objectInstances: ObjectInstance[] = [];
     public worldLights: WorldLights = new WorldLights();
     public renderCache: GfxRenderCache;
+private handleMusic() {
+    const musicState = (window as any).musicState;
+
+    if (this.mapNum === null)
+        return;
+
+    const track = MAP_MUSIC[this.mapNum];
+
+    const FADE_TIME = 1000;
+
+    function fadeOut(audio: HTMLAudioElement, duration: number) {
+        const step = 50;
+        const delta = audio.volume / (duration / step);
+
+        const interval = setInterval(() => {
+            audio.volume = Math.max(0, audio.volume - delta);
+            if (audio.volume <= 0) {
+                clearInterval(interval);
+                audio.pause();
+                audio.currentTime = 0;
+            }
+        }, step);
+    }
+
+    function fadeIn(audio: HTMLAudioElement, targetVolume: number, duration: number) {
+        audio.volume = 0;
+        const step = 50;
+        const delta = targetVolume / (duration / step);
+
+        const interval = setInterval(() => {
+            audio.volume = Math.min(targetVolume, audio.volume + delta);
+            if (audio.volume >= targetVolume)
+                clearInterval(interval);
+        }, step);
+    }
+
+    if (track) {
+        const newSrc = `data/audio/${track}`;
+
+        if (!musicState.audio || !musicState.audio.src.includes(track)) {
+
+            if (musicState.audio)
+                fadeOut(musicState.audio, FADE_TIME);
+
+            const newAudio = new Audio(newSrc);
+            newAudio.loop = true;
+
+            musicState.audio = newAudio;
+
+            if (!musicState.muted) {
+                newAudio.play().then(() => {
+                    fadeIn(newAudio, 0.2, FADE_TIME);
+                }).catch(() => {});
+            }
+        }
+    } else {
+        if (musicState.audio)
+            fadeOut(musicState.audio, FADE_TIME);
+    }
+}
+
+
 
     private constructor(public context: SceneContext, public gameInfo: GameInfo, public subdirs: string[], private materialFactory: MaterialFactory) {
         this.renderCache = this.materialFactory.cache;
@@ -70,11 +171,19 @@ export class World {
         this.objectMan = objectMan;
     }
 
-    public static async create(context: SceneContext, gameInfo: GameInfo, dataFetcher: DataFetcher, subdirs: string[], materialFactory: MaterialFactory): Promise<World> {
-        const self = new World(context, gameInfo, subdirs, materialFactory);
-        await self.init(dataFetcher);
-        return self;
-    }
+public static async create(
+    context: SceneContext,
+    gameInfo: GameInfo,
+    dataFetcher: DataFetcher,
+    subdirs: string[],
+    materialFactory: MaterialFactory
+): Promise<World> {
+
+    const self = new World(context, gameInfo, subdirs, materialFactory);
+    await self.init(dataFetcher);
+
+    return self;
+}
 
     public setMapInstance(mapInstance: MapInstance | null) {
         this.mapInstance = mapInstance;
@@ -163,6 +272,13 @@ export class World {
     }
 
     public destroy(device: GfxDevice) {
+        // Stop background music when leaving scene
+if (this.backgroundMusic) {
+    this.backgroundMusic.pause();
+    this.backgroundMusic.currentTime = 0;
+    this.backgroundMusic = null;
+}
+
         for (let obj of this.objectInstances)
             obj.destroy(device);
         this.envfxMan.destroy(device);
@@ -424,7 +540,11 @@ export class SFAWorldSceneDesc implements Viewer.SceneDesc {
             mat4.fromTranslation(mapMatrix, mapTrans);
             mapInstance.setMatrix(mapMatrix);
 
-            world.setMapInstance(mapInstance);
+world.setMapInstance(mapInstance);
+world.mapNum = this.mapNum;
+(world as any).handleMusic();
+
+
         }
 
         const romlistNames: string[] = Array.isArray(this.id_) ? this.id_ : [this.id_];
@@ -508,7 +628,11 @@ export class SFAMapSceneDesc implements Viewer.SceneDesc {
             mat4.fromTranslation(mapMatrix, mapTrans);
             mapInstance.setMatrix(mapMatrix);
 
-            world.setMapInstance(mapInstance);
+world.setMapInstance(mapInstance);
+world.mapNum = this.mapNum;
+(world as any).handleMusic();
+
+
         }
 
         const romlistNames: string[] = Array.isArray(this.id_) ? this.id_ : [this.id_];
@@ -535,7 +659,115 @@ export class SFAMapSceneDesc implements Viewer.SceneDesc {
             console.log(`Object ${objType}: ${obj.name} (type ${obj.typeNum} class ${obj.objClass})`);
         };
 
+
         const renderer = new WorldRenderer(world, materialFactory);
         return renderer;
+    }
+}
+export class SFAFullFinalWorldSceneDesc implements Viewer.SceneDesc {
+    public id: string = "fullglobalworld";
+
+    constructor(public name: string, private gameInfo: GameInfo = SFA_GAME_INFO) {}
+
+    public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
+
+        const dataFetcher = context.dataFetcher;
+        const materialFactory = new MaterialFactory(device);
+
+  
+        const world = await World.create(
+            context,
+            this.gameInfo,
+            dataFetcher,
+             ["swaphol"],  
+            materialFactory
+        );
+
+        // Read GLOBALMA.bin
+        const globalMapFile = await dataFetcher.fetchData(`${this.gameInfo.pathBase}/globalma.bin`);
+        const dv = globalMapFile.createDataView();
+
+        const mapInstances: MapInstance[] = [];
+
+        let offset = 0;
+
+        while (offset + 12 <= dv.byteLength) {
+
+            const x = dv.getInt16(offset + 0);
+            const y = dv.getInt16(offset + 2);
+            const layer = dv.getInt16(offset + 4);
+            const mapId = dv.getInt16(offset + 6);
+      
+            offset += 12;
+
+            if (mapId < 0)
+                break;
+const subdir = this.gameInfo.subdirs[mapId];
+
+const ARWING_IDS = new Set([
+    3,   // arwing
+ 
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+]);
+
+if (ARWING_IDS.has(mapId))
+    continue;
+
+
+            const mapSceneInfo = await loadMap(this.gameInfo, dataFetcher, mapId);
+            const mapInstance = new MapInstance(mapSceneInfo, world.blockFetcher, world);
+            await mapInstance.reloadBlocks(dataFetcher);
+
+            const mapMatrix = mat4.create();
+const origin = mapSceneInfo.getOrigin();
+
+mat4.fromTranslation(
+    mapMatrix,
+    vec3.fromValues(
+        (x - origin[0]) * 640,
+        0,
+        (y - origin[1]) * 640
+    )
+);
+
+
+            mapInstance.setMatrix(mapMatrix);
+            mapInstances.push(mapInstance);
+        }
+
+      
+        class GlobalWorldRenderer extends WorldRenderer {
+
+            protected override addWorldRenderInsts(
+                device: GfxDevice,
+                renderInstManager: GfxRenderInstManager,
+                renderLists: SFARenderLists,
+                sceneCtx: SceneRenderContext
+            ) {
+                const template = renderInstManager.pushTemplateRenderInst();
+                fillSceneParamsDataOnTemplate(template, sceneCtx.viewerInput);
+
+                const modelCtx: ModelRenderContext = {
+                    sceneCtx,
+                    showDevGeometry: false,
+                    showMeshes: true,
+                    ambienceIdx: 0,
+                    outdoorAmbientColor: scratchColor0,
+                    setupLights: () => {},
+                };
+
+                for (const map of mapInstances)
+                    map.addRenderInsts(device, renderInstManager, renderLists, modelCtx);
+
+                renderInstManager.popTemplateRenderInst();
+            }
+        }
+
+        return new GlobalWorldRenderer(world, materialFactory);
     }
 }

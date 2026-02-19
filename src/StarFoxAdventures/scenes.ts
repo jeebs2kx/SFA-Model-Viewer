@@ -1,7 +1,7 @@
 import * as Viewer from '../viewer.js';
 
-import { SFAMapSceneDesc, SwapcircleSceneDesc, AncientMapSceneDesc, EarlydupMapSceneDesc, EarlyfearMapSceneDesc, EarlyDFPMapSceneDesc, Early1MapSceneDesc, Early2MapSceneDesc, Early3MapSceneDesc, Early4MapSceneDesc, } from './maps.js';
-import { SFAWorldSceneDesc } from './world.js';
+import {SFAMapSceneDesc, SwapcircleSceneDesc, AncientMapSceneDesc, EarlydupMapSceneDesc, EarlyfearMapSceneDesc, EarlyDFPMapSceneDesc, Early1MapSceneDesc, Early2MapSceneDesc, Early3MapSceneDesc, Early4MapSceneDesc, } from './maps.js';
+import { SFAWorldSceneDesc, SFAFullFinalWorldSceneDesc } from './world.js';
 import { SFAModelExhibitSceneDesc } from './modelexhibit.js';
 import { ModelVersion } from './modelloader.js';
 import { EARLYFEAR } from './blocks.js';
@@ -10,7 +10,10 @@ export interface GameInfo {
     pathBase: string;
     subdirs: {[key: number]: string};
 }
-console.error("🔥 SFA SCENE GROUP LOADED 🔥");
+export const DP_GAME_INFO: GameInfo = {
+    pathBase: 'DinosaurPlanet', 
+    subdirs: {}, 
+    }
 
 export const SFA_GAME_INFO: GameInfo = {
     pathBase: 'StarFoxAdventures',
@@ -168,9 +171,13 @@ export const SFADEMO_GAME_INFO: GameInfo = {
         72: 'linki',
         73: 'swapcircle',
         74: 'Copy of swaphol',
+
+        
  
     }
 };
+
+
 
 const ANCIENT_DP_GAME_INFO: GameInfo = {
     pathBase: 'StarFoxAdventuresDemo',
@@ -184,6 +191,10 @@ new SFAModelExhibitSceneDesc('modelexhibit', 'Model + Animation Viewer (Final)',
 new SFAModelExhibitSceneDesc('modelexhibit', 'Model + Animation Viewer (Kiosk)', ModelVersion.Final, SFADEMO_GAME_INFO),
 new SFAModelExhibitSceneDesc('betamodelexhibit', 'Early 2001 Model Viewer (in progress)', ModelVersion.Beta, SFADEMO_GAME_INFO),
 new SFAModelExhibitSceneDesc('demomodelexhibit', 'Mid 2001 Viewer (in progress)', ModelVersion.Demo, SFADEMO_GAME_INFO),
+
+'Full World Maps (experimental)',
+new SFAFullFinalWorldSceneDesc('Full Final World'),
+new SFAFullFinalWorldSceneDesc('Full Kiosk World', SFADEMO_GAME_INFO),
 
 'Very Early 2001 Maps',
  new SwapcircleSceneDesc(22, 'betaswapcircle', 'Very Early 2001: Swapstone Circle (T)', SFADEMO_GAME_INFO),
@@ -371,6 +382,10 @@ new SFAWorldSceneDesc('dragbot', 'dragrockbot', 52, 'Kiosk: Dragon Rock Bot', SF
 
 
 
+
+'Final Maps',
+
+
     'Final Maps',
     new SFAWorldSceneDesc('gamefront', 'gamefront', 63, 'Great Fox'),
     new SFAWorldSceneDesc(['frontend', 'galleonship'], ['shipbattle', 'warlock'], null, 'Galleon'),
@@ -444,3 +459,4 @@ const name = 'Star Fox Adventures';
 export const sceneGroup: Viewer.SceneGroup = {
     id, name, sceneDescs,
 };
+

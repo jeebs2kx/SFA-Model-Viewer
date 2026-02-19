@@ -37,12 +37,12 @@ export const KNOWN_ANCIENT_WATER_TEXIDS = new Set<number>([
 ]);
 
 export const KNOWN_CUTOUT_TEXIDS_BETA = new Set<number>([
-3254, 3272, 3270, 3246, 3252, 202,189, 3248, 3273 // TODO: put your IDs here, e.g. 142, 511, 733
+3254, 3272, 3270, 3246, 3252, 202,189, 3248, 3273
 ]);
 
 export const KNOWN_CUTOUT_TEXIDS_ANCIENT = new Set<number>([
   630, 646, 672,  1094, 1098, 1103, 1107, 1110, 1111, 1112// leaf/flower/grass texIds (resolved IDs)
-  // TODO: put your IDs here, e.g. 142, 511, 733
+  
 ]);
 export const KNOWN_CUTOUT_TEXIDS_EARLY1 = new Set<number>([
 1692, 1135, 1695, 1131 , 176, 783, 785 

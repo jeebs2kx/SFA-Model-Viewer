@@ -328,7 +328,7 @@ export class EARLY1BLOCKFETCHER implements BlockFetcher {
     public async init(dataFetcher: DataFetcher, texFetcherPromise: Promise<TextureFetcher>) {
         const pathBase = this.gameInfo.pathBase;
         const [trkblk, texFetcher] = await Promise.all([
-            dataFetcher.fetchData(`${pathBase}/TRKBLK.tab`),
+            dataFetcher.fetchData(`${pathBase}/TRKBLK.tab`), //required
             texFetcherPromise,
         ]);
         this.trkblkTab = trkblk.createDataView();
@@ -634,7 +634,45 @@ const ANCIENT_TRKBLK: {[key: number]: number} = {
     55: 0x4db, // mod55.0..21
 };
 
-// blocks.ts
+export class DPBlockFetcher implements BlockFetcher {
+    private trkblkTab: DataView;
+    private texFetcher: TextureFetcher;
+    private pathBase: string;
+
+    private constructor(private materialFactory: MaterialFactory, texFetcher: TextureFetcher, pathBase: string) {
+        this.texFetcher = texFetcher;
+        this.pathBase = pathBase;
+    }
+
+    public static async create(gameInfo: GameInfo, dataFetcher: DataFetcher, materialFactory: MaterialFactory, texFetcherPromise: Promise<TextureFetcher>): Promise<DPBlockFetcher> {
+        const texFetcher = await texFetcherPromise;
+        const pathBase = gameInfo.pathBase; 
+
+        // We only need the track table to know which block indices to load
+        const trkblk = await dataFetcher.fetchData(`${pathBase}/TRKBLK.bin`);
+
+        const self = new DPBlockFetcher(materialFactory, texFetcher, pathBase);
+        self.trkblkTab = trkblk.createDataView();
+        return self;
+    }
+
+    public async fetchBlock(mod: number, sub: number, dataFetcher: DataFetcher): Promise<Model | null> {
+        if (mod * 2 >= this.trkblkTab.byteLength) return null;
+        const blockBase = this.trkblkTab.getUint16(mod * 2, false);
+        const blockNum = blockBase + sub;
+
+        const url = `${this.pathBase}/uncompressed_blocks/${blockNum}.bin`;
+        
+        try {
+            const buffer = await dataFetcher.fetchData(url);
+            return loadModel(buffer.createDataView(), this.texFetcher, this.materialFactory, ModelVersion.DinosaurPlanet);
+        } catch (e) {
+            // If file doesn't exist (404), it's just an empty map cell.
+            return null;
+        }
+    }
+}
+
 export class AncientBlockFetcher implements BlockFetcher {
     blocksTab: DataView;
     blocksBin: ArrayBufferSlice;
@@ -682,3 +720,4 @@ export class AncientBlockFetcher implements BlockFetcher {
         return loadModel(blockData, this.texFetcher, this.materialFactory, ModelVersion.AncientMap);
     }
 }
+

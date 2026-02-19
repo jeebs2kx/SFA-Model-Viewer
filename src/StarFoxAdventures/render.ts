@@ -71,8 +71,9 @@ export class SFARenderer implements Viewer.SceneGfx {
     private temporalTextureMapping = new TextureMapping();
     private temporalTexture = new GfxrTemporalTexture();
 
-    private mainColorDesc = new GfxrRenderTargetDescription(GfxFormat.U8_RGBA_RT);
-    protected mainDepthDesc = new GfxrRenderTargetDescription(GfxFormat.D32F);
+private mainColorDesc = new GfxrRenderTargetDescription(GfxFormat.U8_RGBA_RT);
+// FIX: D32F (Float Depth) often fails on Quest 3. D24_S8 is universal.
+protected mainDepthDesc = new GfxrRenderTargetDescription(GfxFormat.D24_S8);
 
     private depthResampler: DepthResampler;
 
@@ -295,8 +296,10 @@ export class SFARenderer implements Viewer.SceneGfx {
         // viewerInput.camera.setClipPlanes(2.5, 10000); // Set near and far planes as in the original game in order to support heat shimmer (TODO: use depth resampler instead)
 
         this.update(viewerInput);
+viewerInput.camera.setClipPlanes(2.5, 20000000);
 
         this.renderHelper.pushTemplateRenderInst();
+
         const renderInstManager = this.renderHelper.renderInstManager;
 
         const sceneCtx: SceneRenderContext = {
@@ -308,7 +311,7 @@ export class SFARenderer implements Viewer.SceneGfx {
             world: this.world,
         };
 
-        computeViewMatrix(sceneCtx.worldToViewMtx, viewerInput.camera);
+computeViewMatrix(sceneCtx.worldToViewMtx, viewerInput.camera);
         mat4.invert(sceneCtx.viewToWorldMtx, sceneCtx.worldToViewMtx);
 
         this.addSkyRenderInsts(device, renderInstManager, this.renderLists, sceneCtx);
@@ -320,7 +323,7 @@ export class SFARenderer implements Viewer.SceneGfx {
         this.mainColorDesc.clearColor = BACKGROUND_COLOR;
 
         this.mainDepthDesc.copyDimensions(this.mainColorDesc);
-        this.mainDepthDesc.clearDepth = standardFullClearRenderPassDescriptor.clearDepth;
+this.mainDepthDesc.clearDepth = standardFullClearRenderPassDescriptor.clearDepth;
 
         this.temporalTexture.setDescription(device, this.mainColorDesc);
 
